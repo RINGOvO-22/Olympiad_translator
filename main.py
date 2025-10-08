@@ -28,7 +28,7 @@ def main():
 
     translator = IMOShortListTranslator("results/item_list.json", preamble=preamble)
     full_zh_md, structured_items = translator.translate()
-    print(translator.get_token_report())
+    # print(translator.get_token_report())
 
     # 确保 results 目录存在
     os.makedirs("results", exist_ok=True)

@@ -7,7 +7,7 @@ from langchain.prompts import ChatPromptTemplate
 from langchain.output_parsers import ResponseSchema, StructuredOutputParser
 from src import apiLoader
 
-IMG_PATTERN = re.compile(r"!\$$images/([a-f0-9]{64}\.jpg)\$$")
+IMG_PATTERN = re.compile(r"!\[\]\(images/([a-f0-9]{64}\.jpg)\)")
 
 class IMOShortListTranslator:
     def __init__(self, item_list_path: str, preamble: str):
@@ -80,8 +80,11 @@ class IMOShortListTranslator:
     def _record_token_usage(self, resp, category: str):
         """从 LLM 响应中提取 token usage 并累加"""
         usage = resp.response_metadata.get("token_usage", {})
-        input_tokens = usage.get("input_tokens", 0)
-        output_tokens = usage.get("output_tokens", 0)
+        # input_tokens = usage.get("input_tokens", 0)
+        # output_tokens = usage.get("output_tokens", 0)
+
+        input_tokens = usage.get("input_tokens", usage.get("input_token_count", 0))
+        output_tokens = usage.get("output_tokens", usage.get("output_token_count", 0))
         
         self.token_usage["total_input"] += input_tokens
         self.token_usage["total_output"] += output_tokens
@@ -123,13 +126,13 @@ class IMOShortListTranslator:
         structured_items = []
 
         prev_category = None
-        round = 0
         for item in self.items:
-            round += 1
-            if round == 2:  # 测试用
-                break
 
             label = item["label"]
+            # # for test
+            # if label != "C4":
+            #     continue
+
             category = self._get_category(label)
 
             # 提取占位符
@@ -162,7 +165,7 @@ class IMOShortListTranslator:
             # 还原数学公式
             prob_zh = self.restore_math_placeholders(output_dict["problem_zh"])
             sols_zh = [self.restore_math_placeholders(s) for s in output_dict["solution_zh"]]
-            final_answer_zh = output_dict.get("final_answer")
+            final_answer_zh = self.restore_math_placeholders(output_dict.get("final_answer"))
             others_zh = self.restore_math_placeholders(output_dict.get("others"))
 
             # 构建 Markdown（只在 category 变化时加标题）
@@ -180,11 +183,22 @@ class IMOShortListTranslator:
                 others_zh or "",
                 ""
             ])
-            # 保存结构化条目
+            
+            # 提取该题所有图片哈希
+            all_text_for_images = item["problem"] + "\n" + "\n".join(item["solutions"])
+            image_hashes = self._extract_image_hashes(all_text_for_images)
+            image_b64_list = [
+                self._load_image_as_base64(h) for h in image_hashes
+            ]
+            # 过滤掉 None
+            image_b64_list = [b64 for b64 in image_b64_list if b64 is not None]
+
+            # === 修改 structured_items.append ===
             structured_items.append({
                 "problem_zh": prob_zh,
                 "solution_zh": sols_zh,
-                "final_answer": final_answer_zh
+                "final_answer": final_answer_zh,
+                "images": image_b64_list
             })
 
         full_text = "\n".join([
@@ -242,6 +256,19 @@ class IMOShortListTranslator:
         )
         return report
 
+    def _extract_image_hashes(self, text: str) -> list[str]:
+        """从文本中提取所有图片哈希名（不含路径）"""
+        return IMG_PATTERN.findall(text)
+
+    def _load_image_as_base64(self, hash_name: str, images_dir: str = "resources/images") -> str | None:
+        """根据哈希名加载图片并转为 Base64"""
+        path = os.path.join(images_dir, hash_name)
+        if os.path.exists(path):
+            with open(path, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode("utf-8")
+                return f"data:image/jpeg;base64,{b64}"
+        return None
+    
     @staticmethod
     def _get_category(label: str) -> str:
         mapping = {"A": "Algebra", "C": "Combinatorics", "G": "Geometry", "N": "Number Theory"}
