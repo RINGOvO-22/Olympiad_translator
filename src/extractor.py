@@ -24,7 +24,7 @@ class IMOShortlistExtractor:
             re.MULTILINE | re.VERBOSE
         )
 
-    def _split_sections(self) -> tuple[str, str]:
+    def _split_sections_old(self) -> tuple[str, str]:
         """切分 Problems 和 Solutions 区块"""
         problems_match = re.search(r"^# Problems\s*$(.*?)^# Solutions\s*$", self.text, re.DOTALL | re.MULTILINE)
         solutions_match = re.search(r"^# Solutions\s*$(.*)", self.text, re.DOTALL | re.MULTILINE)
@@ -33,6 +33,26 @@ class IMOShortlistExtractor:
             raise ValueError("未能找到 # Problems 或 # Solutions 区块")
 
         return problems_match.group(1).strip(), solutions_match.group(1).strip()
+    
+    def _split_sections(self) -> tuple[str, str, str]:
+        """切分 Preamble（# Problems 之前）、Problems 区块、Solutions 区块"""
+        # 查找 # Problems 和 # Solutions 的行位置
+        problems_match = re.search(r"^# Problems\s*$", self.text, re.MULTILINE)
+        solutions_match = re.search(r"^# Solutions\s*$", self.text, re.MULTILINE)
+
+        if not problems_match or not solutions_match:
+            raise ValueError("未能找到 # Problems 或 # Solutions 区块")
+
+        # Preamble: 从开头到 # Problems 行之前（不包含 # Problems 行）
+        preamble = self.text[:problems_match.start()].rstrip('\n')
+
+        # Problems: 从 # Problems 行之后 到 # Solutions 行之前
+        problems_text = self.text[problems_match.end():solutions_match.start()].strip()
+
+        # Solutions: 从 # Solutions 行之后到结尾
+        solutions_text = self.text[solutions_match.end():].strip()
+
+        return preamble, problems_text, solutions_text
 
     def _parse_section(self, section_text: str) -> List[Dict[str, str]]:
         """解析一个区块（Problems 或 Solutions），返回题目列表"""
@@ -81,7 +101,7 @@ class IMOShortlistExtractor:
 
     def extract(self) -> List[Dict[str, str]]:
         """主入口：返回按顺序对齐的题目列表（每题含 problem + solutions）"""
-        problems_text, solutions_text = self._split_sections()
+        preamble, problems_text, solutions_text = self._split_sections()
 
         problem_items = self._parse_section(problems_text)
         solution_items = self._parse_section(solutions_text)
@@ -95,14 +115,14 @@ class IMOShortlistExtractor:
             sol_map[label].append(item["content"])
 
         # 按 Problems 顺序输出（确保 31 题顺序正确）
-        result = []
+        items = []
         for prob in problem_items:
             label = prob["label"]
             solutions = sol_map.get(label, [])
-            result.append({
+            items.append({
                 "label": label,
                 "problem": prob["content"],
                 "solutions": solutions
             })
 
-        return result
+        return preamble, items
